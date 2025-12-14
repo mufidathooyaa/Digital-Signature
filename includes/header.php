@@ -21,12 +21,15 @@
                         <li><a href="kelola_pengajuan.php">Kelola Pengajuan</a></li>
                         <li><a href="generate_key.php">Generate Key</a></li>
                         <li><a href="tanda_tangan.php">Tanda Tangan</a></li>
-                        
                         <li><a href="kelola_user.php">Kelola User</a></li> 
                     <?php endif; ?>
 
                     <li><a href="riwayat.php">Riwayat</a></li>
                     
+                    <?php if ($_SESSION['user']['role'] !== 'direksi'): ?>
+                        <li><a href="ganti_password.php">Ganti Password</a></li>
+                    <?php endif; ?>
+
                     <li class="user-info">
                         <span class="user-badge"><?php echo ucfirst($_SESSION['user']['role']); ?></span>
                         <a href="logout.php" style="color: #ef4444;">Logout</a>
