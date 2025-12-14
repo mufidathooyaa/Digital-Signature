@@ -106,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <div style="display: flex; gap: 10px; margin-top: 20px;">
                     <button type="submit" class="btn btn-primary">Upload & Ajukan</button>
-                    <a href="dashboard.php" class="btn" style="background: #6b7280; color: white;">Batal</a>
+                    <a href="dashboard.php" class="btn" style="background: #ff0000ff; color: white;">Batal</a>
                 </div>
             </form>
         </div>

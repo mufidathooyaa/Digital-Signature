@@ -7,7 +7,7 @@
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #F5F2ED 0%, #DCC9B2 100%);
+    background: linear-gradient(180deg, #0d3b2e 0%, #2C3930 100%);
     min-height: 100vh;
     color: #333;
 }
@@ -39,7 +39,7 @@ body {
 }
 
 .login-header h2 {
-    color: #B5654A;
+    color: #0d3b2e;
     margin-bottom: 10px;
     font-size: 24px;
 }
@@ -105,7 +105,7 @@ body {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #DCC9B2 0%, #e2f882 100%);
+    background: linear-gradient(180deg, #0d3b2e 0%, #2C3930 100%);
     color: white;
 }
 

@@ -32,35 +32,43 @@ function sanitizeInput($data) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Sistem Digital Signature PKI</title>
-    <link rel="stylesheet" href="assets/css/style.css">
+    <link rel="stylesheet" href="assets/css/login.css">
     <link rel="icon" type="image/png" href="assets/img/logo.png">
 </head>
-<body class="login-page">
-    <div class="login-container">
-        <div class="login-box">
-            <div class="login-header">
-                <h2>Sistem Penandatangan Digital</h2>
-                <p>Dokumen Korporasi</p>
-            </div>
-            
+<body>
+
+<div class="auth-wrapper">
+    <!-- LEFT SIDE -->
+    <div class="auth-left">
+        <img src="assets/img/rafiki.png" alt="Login Illustration">
+    </div>
+
+    <!-- RIGHT SIDE -->
+    <div class="auth-right">
+        <div class="login-card">
+            <h2>Hello!</h2>
+            <p class="subtitle">Silakan Log-In Signers</p>
+
             <?php if ($error): ?>
-                <div class="alert alert-danger"><?php echo $error; ?></div>
+                <div class="error-box"><?= $error ?></div>
             <?php endif; ?>
-            
-            <form method="POST" action="" class="login-form">
-                <div class="form-group">
-                    <label for="username">Username</label>
-                    <input type="text" id="username" name="username" required autofocus>
+
+            <form method="POST">
+                <div class="input-group">
+                    <span class="icon">✉</span>
+                    <input type="text" name="username" placeholder="Username" required>
                 </div>
-                
-                <div class="form-group">
-                    <label for="password">Password</label>
-                    <input type="password" id="password" name="password" required>
+
+                <div class="input-group">
+                    <span class="icon">🔒</span>
+                    <input type="password" name="password" placeholder="Password" required>
                 </div>
-                
-                <button type="submit" class="btn btn-primary btn-block">Login</button>
+
+                <button type="submit" class="btn-login">Login</button>
             </form>
         </div>
     </div>
+</div>
+
 </body>
 </html>

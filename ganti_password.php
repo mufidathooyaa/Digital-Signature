@@ -67,7 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="icon" type="image/png" href="assets/img/logo.png">
     <style>
         .form-box { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: 40px auto; }
-        .form-group { margin-bottom: 20px; }
+        .form-group { margin-top: 20px; margin-bottom: 20px; padding }
         .form-group label { display: block; margin-bottom: 8px; font-weight: 500; }
         .form-group input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
         .btn-full { width: 100%; padding: 12px; }
