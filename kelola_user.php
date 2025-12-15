@@ -98,7 +98,9 @@ $users = $conn->query("SELECT * FROM users ORDER BY role ASC, created_at DESC");
     <link rel="stylesheet" href="assets/css/style.css">
     <link rel="icon" type="image/png" href="assets/img/logo.png">
     <style>
-        .action-bar { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .action-bar { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;  background: #ffffff; border-radius: 15px; padding: 20px;}
+        .action-bar h1{color: #667eea}
+        .action-bar p{color: #666;}
         .table-wrapper { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; min-width: 800px; }
         th, td { padding: 12px 15px; border-bottom: 1px solid #eee; text-align: left; vertical-align: middle; }
