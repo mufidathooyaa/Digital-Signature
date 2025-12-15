@@ -147,19 +147,19 @@ if ($role === 'karyawan') {
             <p style="color: #666; margin-bottom: 15px;">Silakan unduh template di bawah ini, isi datanya, lalu upload kembali di menu "Buat Pengajuan".</p>
             
             <div class="action-grid">
-                <a href="templates/Template_Pengajuan_Dana.docx" class="action-card" download>
+                <a href="download.php?source=template&file=Template_Pengajuan_Dana.docx" class="action-card">
                     <div class="action-icon" style="font-size: 40px;">💰</div>
                     <h3>Pengajuan Dana</h3>
                     <p>Format: Microsoft Word (.docx)</p>
                 </a>
-                
-                <a href="templates/Template_Surat_Tugas.docx" class="action-card" download>
+
+                <a href="download.php?source=template&file=Template_Surat_Tugas.docx" class="action-card">
                     <div class="action-icon" style="font-size: 40px;">📋</div>
                     <h3>Surat Tugas</h3>
                     <p>Format: Microsoft Word (.docx)</p>
                 </a>
-                
-                <a href="templates/Template_BAST.docx" class="action-card" download>
+
+                <a href="download.php?source=template&file=Template_BAST.docx" class="action-card">
                     <div class="action-icon" style="font-size: 40px;">🤝</div>
                     <h3>Berita Acara (BAST)</h3>
                     <p>Format: Microsoft Word (.docx)</p>
