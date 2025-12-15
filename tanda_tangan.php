@@ -4,13 +4,11 @@ require_once 'includes/auth.php';
 require_once 'includes/crypto.php';
 require_once 'includes/functions.php';
 
-// Hanya Direksi yang bisa akses
 requireRole('direksi');
 
 $success = '';
 $error = '';
 
-// Cek apakah ada keypair aktif untuk user ini
 $user_id = $_SESSION['user']['id'];
 $keypair = getActiveKeyPair($conn, $user_id);
 
@@ -21,76 +19,78 @@ if (!$keypair) {
 // Handle form submission (Proses Tanda Tangan)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sign']) && $keypair) {
     $doc_id = (int)$_POST['document_id'];
-    $passphrase = $_POST['passphrase']; // Ambil password dari input user
+    $passphrase = $_POST['passphrase'];
     
-    // Validasi input
     if (empty($passphrase)) {
-        $error = "Harap masukkan Passphrase / Password Kunci Anda.";
+        $error = "Harap masukkan Passphrase untuk membuka Private Key Anda.";
     } else {
-        // Ambil data dokumen
         $stmt = $conn->prepare("SELECT * FROM documents WHERE id = ? AND status = 'approved'");
         $stmt->bind_param("i", $doc_id);
         $stmt->execute();
         $document = $stmt->get_result()->fetch_assoc();
         
         if ($document) {
-            // 1. Hash Dokumen (Mengunci Metadata Database + Isi File Fisik)
-            $documentHash = hashDocumentTemplate($document, $document['file_path']);
+            // =====================================================
+            // ALUR BENAR: 
+            // 1. Stempel QR ke PDF → File Final
+            // 2. Hash File Final
+            // 3. Passphrase = Unlock Private Key (yang terenkripsi)
+            // 4. Sign Hash dengan Private Key (yang sudah di-unlock)
+            // =====================================================
             
-            // 2. Lakukan Tanda Tangan Digital
-            // NOTE: Fungsi signDocument harus diupdate di crypto.php agar menerima parameter passphrase
-            // Jika private key terenkripsi, ini akan gagal jika password salah.
-            $signature = signDocument($documentHash, $keypair['private_key'], $passphrase);
+            $targetDir = 'signed_docs/';
+            if (!file_exists($targetDir)) {
+                mkdir($targetDir, 0777, true);
+            }
             
-            if ($signature) {
-                // --- PROSES STEMPEL QR CODE KE PDF ---
-                
-                $targetDir = 'signed_docs/';
-                if (!file_exists($targetDir)) {
-                    mkdir($targetDir, 0777, true);
+            // STEP 1: Generate QR & Stempel ke PDF
+            $host = $_SERVER['HTTP_HOST']; 
+            $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
+            $base_path = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
+            $qrContent = "$protocol://$host$base_path/verifikasi.php?code=" . urlencode($document['nomor_surat']);
+            
+            require_once 'includes/pdf_stamper.php';
+            
+            $sourcePdf = $document['file_path'];
+            $outputPdf = $targetDir . basename($sourcePdf);
+            
+            $stampSuccess = false;
+            try {
+                if (stampQrToPdf($sourcePdf, $outputPdf, $qrContent, $document['nomor_surat'])) {
+                    $stampSuccess = true;
+                } else {
+                    $error = "Gagal menempelkan QR Code pada PDF.";
                 }
+            } catch (Exception $e) {
+                $error = "Error PDF Library: " . $e->getMessage();
+            }
+            
+            // STEP 2: Jika Stempel Berhasil, HASH FILE FINAL (yang sudah ada QR)
+            if ($stampSuccess && file_exists($outputPdf)) {
                 
-                // DETEKSI URL OTOMATIS YANG LEBIH BAIK
-                // Menggunakan HTTP_HOST agar sesuai dengan yang ada di browser (misal: localhost atau IP LAN)
-                $host = $_SERVER['HTTP_HOST']; 
-                $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
-                $base_path = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
+                $finalFileHash = hash_file('sha256', $outputPdf);
                 
-                // Link Verifikasi untuk QR Code
-                $qrContent = "$protocol://$host$base_path/verifikasi.php?code=" . urlencode($document['nomor_surat']);
+                // STEP 3 & 4: 
+                // - Passphrase digunakan untuk UNLOCK private key yang terenkripsi
+                // - Private key yang di-unlock kemudian dipakai untuk SIGN hash
+                // Fungsi signDocument() sudah menangani ini di crypto.php
                 
-                // Panggil Helper Stempel PDF
-                require_once 'includes/pdf_stamper.php';
+                $signature = signDocument($finalFileHash, $keypair['private_key'], $passphrase);
                 
-                $sourcePdf = $document['file_path'];
-                $outputPdf = $targetDir . basename($sourcePdf);
-                
-                $stampSuccess = false;
-                try {
-                    // Stempel QR Code & Nomor Surat ke PDF
-                    if (stampQrToPdf($sourcePdf, $outputPdf, $qrContent, $document['nomor_surat'])) {
-                        $stampSuccess = true;
-                    } else {
-                        $error = "Gagal menempelkan QR Code pada PDF.";
-                    }
-                } catch (Exception $e) {
-                    $error = "Error PDF Library: " . $e->getMessage();
-                }
-                
-                // Jika Stempel Berhasil, Simpan Signature ke Database
-                if ($stampSuccess) {
+                if ($signature) {
+                    // Simpan Signature ke Database
                     $stmt = $conn->prepare("INSERT INTO signatures (document_id, signer_id, document_hash, digital_signature) VALUES (?, ?, ?, ?)");
-                    $stmt->bind_param("iiss", $doc_id, $_SESSION['user']['id'], $documentHash, $signature);
+                    $stmt->bind_param("iiss", $doc_id, $_SESSION['user']['id'], $finalFileHash, $signature);
                     
                     if ($stmt->execute()) {
                         logActivity($conn, $_SESSION['user']['id'], 'sign_document', "Menandatangani dokumen: " . $document['nomor_surat']);
-                        $success = "✅ Sukses! Dokumen berhasil ditandatangani secara digital.";
+                        $success = "✅ Dokumen berhasil ditandatangani! Hash file final telah di-sign dengan private key Anda.";
                     } else {
-                        $error = "Gagal menyimpan data signature ke database.";
+                        $error = "Gagal menyimpan signature ke database.";
                     }
+                } else {
+                    $error = "⛔ Gagal membuat tanda tangan! Passphrase SALAH atau private key rusak.";
                 }
-            } else {
-                $error = "⛔ Gagal membuat tanda tangan! Passphrase yang Anda masukkan mungkin SALAH.";
             }
         } else {
             $error = "Dokumen tidak ditemukan atau belum disetujui.";
@@ -149,6 +149,14 @@ $result = $conn->query($query);
             float: right;
             margin-left: 10px;
         }
+        .info-box {
+            background: #eff6ff;
+            border-left: 4px solid #3b82f6;
+            padding: 12px;
+            margin: 15px 0;
+            font-size: 13px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -157,7 +165,15 @@ $result = $conn->query($query);
     <div class="container">
         <div class="page-header">
             <h1>✍️ Tanda Tangan Digital</h1>
-            <p>Tandatangani dokumen dengan aman menggunakan Passphrase</p>
+            <p>Tandatangani dokumen dengan RSA Digital Signature</p>
+        </div>
+
+        <div class="info-box">
+            <strong>ℹ️ Cara Kerja:</strong><br>
+            1. Sistem menempelkan QR Code ke PDF<br>
+            2. File final di-hash dengan SHA-256<br>
+            3. Passphrase membuka private key terenkripsi<br>
+            4. Hash di-sign dengan private key menggunakan RSA
         </div>
         
         <?php if ($success): ?>
@@ -189,7 +205,7 @@ $result = $conn->query($query);
                                     <td><?php echo getJenisDokumen($row['jenis_dokumen']); ?></td>
                                     <td><?php echo htmlspecialchars($row['pengaju_nama']); ?></td>
                                     <td>
-                                        <button type="button" class="btn btn-primary btn-sm" onclick="openSignModal(<?php echo $row['id']; ?>, '<?php echo $row['nomor_surat']; ?>')">
+                                        <button type="button" class="btn btn-primary btn-sm" onclick="openSignModal(<?php echo $row['id']; ?>, '<?php echo htmlspecialchars($row['nomor_surat']); ?>')">
                                             ✍️ Proses TTD
                                         </button>
                                     </td>
@@ -259,16 +275,21 @@ $result = $conn->query($query);
 
     <div id="signModal" class="modal">
         <div class="modal-content">
-            <h3 style="margin-top: 0;">🔒 Konfirmasi Keamanan</h3>
-            <p>Masukkan <strong>Passphrase / Password Kunci</strong> Anda untuk menandatangani dokumen <span id="docNomor" style="font-weight:bold;"></span>.</p>
+            <h3 style="margin-top: 0;">🔒 Unlock Private Key</h3>
+            <p>Masukkan <strong>Passphrase</strong> untuk membuka private key terenkripsi Anda.</p>
+            <p style="font-size: 13px; color: #666;">Dokumen: <span id="docNomor" style="font-weight:bold;"></span></p>
             
             <form method="POST" action="">
                 <input type="hidden" name="document_id" id="modalDocId">
                 <input type="password" name="passphrase" class="password-input" placeholder="Masukkan Passphrase Private Key..." required autofocus autocomplete="off">
                 
+                <div class="info-box" style="font-size: 12px;">
+                    Passphrase ini hanya digunakan untuk membuka private key yang terenkripsi di database. Setelah di-unlock, private key akan digunakan untuk sign hash dokumen.
+                </div>
+
                 <div style="margin-top: 15px; text-align: right;">
                     <button type="button" class="btn btn-close" onclick="closeSignModal()">Batal</button>
-                    <button type="submit" name="sign" class="btn btn-primary">✅ Konfirmasi & Tanda Tangan</button>
+                    <button type="submit" name="sign" class="btn btn-primary">✅ Unlock & Sign</button>
                 </div>
             </form>
         </div>
@@ -285,7 +306,6 @@ $result = $conn->query($query);
             document.getElementById('signModal').style.display = "none";
         }
 
-        // Tutup modal jika klik di luar area
         window.onclick = function(event) {
             var modal = document.getElementById('signModal');
             if (event.target == modal) {
@@ -293,6 +313,5 @@ $result = $conn->query($query);
             }
         }
     </script>
-    <script src="assets/js/script.js"></script>
 </body>
 </html>

@@ -4,10 +4,6 @@ require_once 'includes/auth.php';
 require_once 'includes/crypto.php';
 require_once 'includes/functions.php';
 
-// 1. NONAKTIFKAN requireLogin() AGAR PUBLIK BISA AKSES
-// requireLogin(); 
-
-// Pastikan session aktif untuk mengecek status login nanti
 if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
@@ -20,7 +16,6 @@ $verification_mode = '';
 // LOGIKA UTAMA
 if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
     
-    // TENTUKAN MODE DAN NOMOR SURAT
     if (isset($_POST['verify_file'])) {
         $verification_mode = 'accurate';
         $nomor_surat = sanitizeInput($_POST['nomor_surat']);
@@ -34,7 +29,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
     }
 
     if (!empty($nomor_surat)) {
-        // Ambil Data Dokumen dari Database
         $stmt = $conn->prepare("SELECT d.*, s.signer_id, u.nama_lengkap as nama_penanda_tangan, s.signed_at
                                FROM documents d
                                LEFT JOIN signatures s ON d.id = s.document_id
@@ -47,57 +41,143 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
         if ($document) {
             $result = array('document' => $document);
             
-            // Cek apakah dokumen sudah ditandatangani
             if ($document['signed_at']) {
                 
-                // ==========================================
-                // LOGIKA VERIFIKASI KETAT (HANYA FILE FINAL)
-                // ==========================================
+                // =======================================================
+                // VERIFIKASI DIGITAL SIGNATURE YANG BENAR:
+                // 1. Hash file upload
+                // 2. Ambil signature dari DB
+                // 3. Ambil PUBLIC KEY penanda tangan
+                // 4. Verifikasi: apakah signature valid untuk hash tersebut?
+                // =======================================================
                 
                 if ($verification_mode === 'accurate') {
-                    // Cek File Upload User
+                    // MODE AKURAT: Upload File + Verifikasi
+                    
                     if (isset($_FILES['dokumen_upload']) && $_FILES['dokumen_upload']['error'] === 0) {
                         
-                        $serverSignedPath = 'signed_docs/' . basename($document['file_path']);
+                        // 1. Hash File yang Diupload User
+                        $uploadedFileHash = hash_file('sha256', $_FILES['dokumen_upload']['tmp_name']);
                         
-                        if (file_exists($serverSignedPath)) {
-                            // Hitung Hash
-                            $userFileHash = hash_file('sha256', $_FILES['dokumen_upload']['tmp_name']);
-                            $serverFileHash = hash_file('sha256', $serverSignedPath);
+                        // 2. Ambil Data Signature dari Database
+                        $stmt2 = $conn->prepare("SELECT digital_signature, document_hash FROM signatures WHERE document_id = ?");
+                        $stmt2->bind_param("i", $document['id']);
+                        $stmt2->execute();
+                        $signature_data = $stmt2->get_result()->fetch_assoc();
+                        
+                        if ($signature_data) {
+                            // 3. Ambil PUBLIC KEY Penanda Tangan (TIDAK PERLU PASSPHRASE!)
+                            $stmt3 = $conn->prepare("SELECT public_key FROM keypairs WHERE user_id = ? AND status = 'active' ORDER BY generated_at DESC LIMIT 1");
+                            $stmt3->bind_param("i", $document['signer_id']);
+                            $stmt3->execute();
+                            $key_result = $stmt3->get_result()->fetch_assoc();
                             
-                            // Bandingkan
-                            if ($userFileHash === $serverFileHash) {
-                                $result['verification'] = array(
-                                    'status' => 'valid',
-                                    'message' => 'Dokumen 100% Identik dengan Arsip Resmi.'
+                            if ($key_result) {
+                                // 4. Verifikasi Signature dengan Public Key
+                                // Fungsi verifySignature() hanya butuh: hash, signature, public_key
+                                // TIDAK PERLU PASSPHRASE karena public key tidak terenkripsi
+                                
+                                $isSignatureValid = verifySignature(
+                                    $signature_data['document_hash'], 
+                                    $signature_data['digital_signature'], 
+                                    $key_result['public_key']
                                 );
+                                
+                                // 5. Bandingkan Hash File Upload dengan Hash Tersimpan
+                                $hashMatches = ($uploadedFileHash === $signature_data['document_hash']);
+                                
+                                // 6. Hasil Verifikasi
+                                if ($isSignatureValid && $hashMatches) {
+                                    $result['verification'] = array(
+                                        'status' => 'valid',
+                                        'message' => 'DOKUMEN VALID! Signature terverifikasi dengan public key & hash cocok.'
+                                    );
+                                } elseif ($isSignatureValid && !$hashMatches) {
+                                    $result['verification'] = array(
+                                        'status' => 'warning',
+                                        'message' => 'Signature VALID, tetapi file berbeda dengan yang ditandatangani (file dimodifikasi).'
+                                    );
+                                } else {
+                                    $result['verification'] = array(
+                                        'status' => 'invalid',
+                                        'message' => 'SIGNATURE TIDAK VALID! Dokumen palsu atau rusak.'
+                                    );
+                                }
+                                
+                                // Tambahan Info untuk Debugging
+                                $result['debug'] = array(
+                                    'uploaded_hash' => $uploadedFileHash,
+                                    'stored_hash' => $signature_data['document_hash'],
+                                    'signature_valid' => $isSignatureValid,
+                                    'hash_match' => $hashMatches
+                                );
+                                
                             } else {
                                 $result['verification'] = array(
-                                    'status' => 'invalid',
-                                    'message' => 'Isi file berbeda dengan arsip resmi server. Dokumen mungkin palsu, rusak, atau masih berupa draft.'
+                                    'status' => 'error',
+                                    'message' => 'Public key penanda tangan tidak ditemukan.'
                                 );
                             }
                         } else {
                             $result['verification'] = array(
                                 'status' => 'error',
-                                'message' => 'File arsip resmi tidak ditemukan di server (Hubungi Administrator).'
+                                'message' => 'Data signature tidak ditemukan di database.'
                             );
                         }
                     } else {
                         $error = "Gagal mengupload file.";
                     }
+                    
                 } else {
-                    // MODE CEPAT (Cek Database Saja)
-                    $result['verification'] = array(
-                        'status' => 'valid_db', 
-                        'message' => 'Nomor Surat Terdaftar Resmi.'
-                    );
+                    // MODE CEPAT: Cek Nomor Surat + Verifikasi Signature di DB
+                    
+                    $stmt2 = $conn->prepare("SELECT digital_signature, document_hash FROM signatures WHERE document_id = ?");
+                    $stmt2->bind_param("i", $document['id']);
+                    $stmt2->execute();
+                    $signature_data = $stmt2->get_result()->fetch_assoc();
+                    
+                    if ($signature_data) {
+                        $stmt3 = $conn->prepare("SELECT public_key FROM keypairs WHERE user_id = ? AND status = 'active' ORDER BY generated_at DESC LIMIT 1");
+                        $stmt3->bind_param("i", $document['signer_id']);
+                        $stmt3->execute();
+                        $key_result = $stmt3->get_result()->fetch_assoc();
+                        
+                        if ($key_result) {
+                            // Verifikasi Signature dengan Public Key
+                            $isSignatureValid = verifySignature(
+                                $signature_data['document_hash'], 
+                                $signature_data['digital_signature'], 
+                                $key_result['public_key']
+                            );
+                            
+                            if ($isSignatureValid) {
+                                $result['verification'] = array(
+                                    'status' => 'valid_db', 
+                                    'message' => 'Nomor Surat Resmi & Signature Terverifikasi dengan Public Key.'
+                                );
+                            } else {
+                                $result['verification'] = array(
+                                    'status' => 'invalid', 
+                                    'message' => 'Nomor surat terdaftar, tetapi SIGNATURE TIDAK VALID!'
+                                );
+                            }
+                        } else {
+                            $result['verification'] = array(
+                                'status' => 'error', 
+                                'message' => 'Public key tidak ditemukan.'
+                            );
+                        }
+                    } else {
+                        $result['verification'] = array(
+                            'status' => 'pending', 
+                            'message' => 'Nomor surat terdaftar, tetapi belum ditandatangani.'
+                        );
+                    }
                 }
                 
                 $result['signer'] = ['nama_lengkap' => $document['nama_penanda_tangan']];
 
             } else {
-                // KASUS BELUM DITANDATANGANI
                 $result['verification'] = array(
                     'status' => 'pending', 
                     'message' => 'Dokumen ini belum ditandatangani oleh Direksi.'
@@ -126,6 +206,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .upload-box { border: 2px dashed #cbd5e1; padding: 30px; text-align: center; border-radius: 8px; margin-bottom: 15px; background: #f8fafc; }
+        .alert-warning-sig { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; }
+        .debug-box { background: #f3f4f6; border: 1px solid #d1d5db; padding: 10px; margin: 15px 0; font-size: 12px; font-family: monospace; }
     </style>
 </head>
 <body>
@@ -134,9 +216,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
     <div class="container">
         <div class="page-header">
             <h1>🔍 Verifikasi Dokumen</h1>
-            <p>Pastikan keaslian dokumen Anda di sini</p>
+            <p>Verifikasi keaslian dokumen menggunakan RSA Digital Signature</p>
         </div>
-        
+
         <?php if ($error): ?>
             <div class="alert alert-danger"><?php echo $error; ?></div>
         <?php endif; ?>
@@ -149,19 +231,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
 
             <div id="quick" class="tab-content <?php echo ($verification_mode !== 'accurate') ? 'active' : ''; ?>">
                 <form method="POST" action="">
-                    <p style="margin-bottom: 15px; color: #666;">Cek validitas nomor surat yang tertera pada dokumen.</p>
+                    <p style="margin-bottom: 15px; color: #666;">Cek validitas nomor surat dan verifikasi signature di database.</p>
                     <div class="form-group">
                         <label>Nomor Surat</label>
                         <input type="text" name="nomor_surat" required placeholder="Contoh: KEU/20251203/0001" 
                                value="<?php echo htmlspecialchars($nomor_surat); ?>">
                     </div>
-                    <button type="submit" name="verify_quick" class="btn btn-primary">🔍 Cari Dokumen</button>
+                    <button type="submit" name="verify_quick" class="btn btn-primary">🔍 Verifikasi Signature</button>
                 </form>
             </div>
 
             <div id="accurate" class="tab-content <?php echo ($verification_mode === 'accurate') ? 'active' : ''; ?>">
                 <form method="POST" action="" enctype="multipart/form-data">
-                    <p style="margin-bottom: 15px; color: #666;">Upload file PDF yang sudah bertanda tangan (QR Code) untuk dicek keasliannya.</p>
+                    <p style="margin-bottom: 15px; color: #666;">Upload file PDF final (yang sudah ada QR Code) untuk verifikasi lengkap.</p>
                     
                     <div class="form-group">
                         <label>1. Masukkan Nomor Surat</label>
@@ -170,13 +252,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                     </div>
 
                     <div class="form-group">
-                        <label>2. Upload File PDF</label>
+                        <label>2. Upload File PDF (yang sudah ditandatangani)</label>
                         <div class="upload-box">
                             <input type="file" name="dokumen_upload" accept=".pdf" required style="width: 100%;">
                         </div>
                     </div>
                     
-                    <button type="submit" name="verify_file" class="btn btn-primary" style="background: #059669;">🛡️ Validasi File</button>
+                    <button type="submit" name="verify_file" class="btn btn-primary" style="background: #059669;">🛡️ Validasi File & Signature</button>
                 </form>
             </div>
         </div>
@@ -188,21 +270,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                     <div class="alert alert-success" style="font-size: 18px; padding: 25px; text-align: center;">
                         <div style="font-size: 40px; margin-bottom: 10px;">✅</div>
                         <strong>DOKUMEN OTENTIK</strong><br>
-                        <span style="font-size: 14px; font-weight: normal;">(File yang Anda upload 100% SAMA dengan arsip resmi di server kami)</span>
+                        <span style="font-size: 14px; font-weight: normal;">Digital signature valid & hash file cocok</span>
                     </div>
 
                 <?php elseif ($result['verification']['status'] === 'valid_db'): ?>
                     <div class="alert alert-success" style="font-size: 18px; padding: 25px; text-align: center;">
                         <div style="font-size: 40px; margin-bottom: 10px;">✅</div>
-                        <strong>NOMOR SURAT RESMI</strong><br>
-                        <span style="font-size: 14px; font-weight: normal;">(Surat tercatat di sistem. Mohon cek fisik dokumen dengan file asli di bawah)</span>
+                        <strong>SIGNATURE TERVERIFIKASI</strong><br>
+                        <span style="font-size: 14px; font-weight: normal;">Nomor surat resmi & signature valid dengan public key</span>
+                    </div>
+
+                <?php elseif ($result['verification']['status'] === 'warning'): ?>
+                    <div class="alert-warning-sig">
+                        <div style="font-size: 30px; margin-bottom: 10px;">⚠️</div>
+                        <strong>PERHATIAN: FILE DIMODIFIKASI</strong><br>
+                        <span style="font-size: 14px;">Signature VALID, tetapi file berbeda dengan yang ditandatangani.</span>
                     </div>
 
                 <?php elseif ($result['verification']['status'] === 'invalid'): ?>
                     <div class="alert alert-danger" style="font-size: 18px; padding: 25px; text-align: center;">
                         <div style="font-size: 40px; margin-bottom: 10px;">❌</div>
-                        <strong>DOKUMEN TIDAK COCOK</strong><br>
-                        <span style="font-size: 14px;">File upload berbeda dengan arsip resmi. Pastikan Anda mengupload file final yang sudah memiliki QR Code.</span>
+                        <strong>SIGNATURE TIDAK VALID</strong><br>
+                        <span style="font-size: 14px;">Verifikasi dengan public key GAGAL. Dokumen palsu atau rusak.</span>
                     </div>
                 
                 <?php else: ?>
@@ -211,8 +300,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                     </div>
                 <?php endif; ?>
 
+                <?php if (isset($result['debug']) && isset($_SESSION['user'])): ?>
+                <div class="debug-box">
+                    <strong>Debug Info (Only for logged-in users):</strong><br>
+                    Uploaded Hash: <?php echo substr($result['debug']['uploaded_hash'], 0, 32); ?>...<br>
+                    Stored Hash: <?php echo substr($result['debug']['stored_hash'], 0, 32); ?>...<br>
+                    Signature Valid: <?php echo $result['debug']['signature_valid'] ? 'YES' : 'NO'; ?><br>
+                    Hash Match: <?php echo $result['debug']['hash_match'] ? 'YES' : 'NO'; ?>
+                </div>
+                <?php endif; ?>
+
                 <?php if ($result['verification']['status'] !== 'error'): ?>
                 <div style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+                    <h3>Detail Dokumen</h3>
                     <table style="width: 100%;">
                         <tr>
                             <td style="padding: 10px; font-weight: 600; width: 180px;">Penanda Tangan:</td>
@@ -234,7 +334,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                         </tr>
                         <tr>
                             <td style="padding: 10px; font-weight: 600;">Keterangan:</td>
-                            <td style="padding: 10px;"><?php echo $result['document']['keterangan']; ?></td>
+                            <td style="padding: 10px;"><?php echo htmlspecialchars($result['document']['keterangan']); ?></td>
                         </tr>
                     </table>
                     
@@ -243,18 +343,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                         
                         <?php if (isset($_SESSION['user'])): ?>
                             <?php 
-                                // Ambil nama file saja, bukan path lengkap, karena download.php akan menambahkan foldernya
                                 $nama_file = basename($result['document']['file_path']);
                             ?>
                             <div style="margin-top: 10px;">
-                                <a href="download.php?source=signed&file=<?php echo $nama_file; ?>" target="_blank" class="btn btn-primary btn-sm">
-                                    📥 Download File Asli (Internal)
+                                <a href="download.php?source=signed&file=<?php echo urlencode($nama_file); ?>" target="_blank" class="btn btn-primary btn-sm">
+                                    📥 Download File Asli
                                 </a>
                             </div>
                         <?php else: ?>
                             <div style="margin-top: 10px; color: #555; font-size: 0.9em; border-left: 3px solid #2563eb; padding-left: 10px;">
-                                🔒 <em>Untuk alasan keamanan dan privasi data perusahaan, unduhan file asli hanya tersedia untuk staf yang login.<br>
-                                Silakan bandingkan fisik dokumen yang Anda pegang dengan data validasi di atas.</em>
+                                🔒 <em>Unduhan file asli hanya tersedia untuk staf yang login.</em>
                             </div>
                         <?php endif; ?>
                     </div>
