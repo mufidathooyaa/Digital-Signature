@@ -95,7 +95,11 @@ $result = $conn->query($query);
                                 <td><?php echo substr($row['keterangan'], 0, 50) . '...'; ?></td>
                                 <td>
                                     <?php if ($row['file_path']): ?>
-                                        <a href="<?php echo $row['file_path']; ?>" target="_blank" class="btn btn-sm" style="background: #3b82f6; color: white;">Lihat</a>
+                                        <?php 
+                                        // Ambil nama filenya saja
+                                        $nama_file = basename($row['file_path']);
+                                        ?>
+                                        <a href="download.php?source=uploads&file=<?php echo $nama_file; ?>" target="_blank" class="btn btn-sm" style="background: #3b82f6; color: white;">Lihat</a>
                                     <?php else: ?>
                                         <em>Tidak ada</em>
                                     <?php endif; ?>

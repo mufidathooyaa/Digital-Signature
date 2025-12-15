@@ -4,6 +4,14 @@ require_once 'includes/auth.php';
 require_once 'includes/crypto.php';
 require_once 'includes/functions.php';
 
+// 1. NONAKTIFKAN requireLogin() AGAR PUBLIK BISA AKSES
+// requireLogin(); 
+
+// Pastikan session aktif untuk mengecek status login nanti
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
 $result = null;
 $error = '';
 $nomor_surat = '';
@@ -94,7 +102,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                     'status' => 'pending', 
                     'message' => 'Dokumen ini belum ditandatangani oleh Direksi.'
                 );
-                // PERBAIKAN 1: Beri nilai default agar tidak error "Undefined array key"
                 $result['signer'] = ['nama_lengkap' => '-'];
             }
         } else {
@@ -217,7 +224,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                             <td style="padding: 10px; font-weight: 600;">Waktu Tanda Tangan:</td>
                             <td style="padding: 10px;">
                                 <?php 
-                                // PERBAIKAN 2: Cek apakah tanggal ada sebelum diformat
                                 echo ($result['document']['signed_at']) ? date('d F Y, H:i:s', strtotime($result['document']['signed_at'])) : '-'; 
                                 ?>
                             </td>
@@ -234,14 +240,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                     
                     <div class="alert alert-info" style="margin-top: 20px;">
                         <strong>📄 File Arsip Resmi:</strong><br>
-                        <?php 
-                            $fileUrl = 'signed_docs/' . basename($result['document']['file_path']);
-                            if (!file_exists($fileUrl)) {
-                                $fileUrl = $result['document']['file_path']; // Fallback ke file draft jika signed belum ada
-                            }
-                        ?>
-                        <a href="<?php echo $fileUrl; ?>" target="_blank" class="btn btn-primary btn-sm" style="margin-top: 10px;">Download File Asli dari Server</a>
+                        
+                        <?php if (isset($_SESSION['user'])): ?>
+                            <?php 
+                                // Ambil nama file saja, bukan path lengkap, karena download.php akan menambahkan foldernya
+                                $nama_file = basename($result['document']['file_path']);
+                            ?>
+                            <div style="margin-top: 10px;">
+                                <a href="download.php?source=signed&file=<?php echo $nama_file; ?>" target="_blank" class="btn btn-primary btn-sm">
+                                    📥 Download File Asli (Internal)
+                                </a>
+                            </div>
+                        <?php else: ?>
+                            <div style="margin-top: 10px; color: #555; font-size: 0.9em; border-left: 3px solid #2563eb; padding-left: 10px;">
+                                🔒 <em>Untuk alasan keamanan dan privasi data perusahaan, unduhan file asli hanya tersedia untuk staf yang login.<br>
+                                Silakan bandingkan fisik dokumen yang Anda pegang dengan data validasi di atas.</em>
+                            </div>
+                        <?php endif; ?>
                     </div>
+
                 </div>
                 <?php endif; ?>
             </div>

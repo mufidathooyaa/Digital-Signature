@@ -1,49 +1,48 @@
 <?php
-// FILE: download.php
+// FILE: download.php (UPDATE LENGKAP)
+require_once 'config/database.php';
 require_once 'includes/auth.php';
 
+// 1. WAJIB LOGIN untuk mendownload file apapun
 requireLogin(); 
 
-if (isset($_GET['type'])) {
-    $type = $_GET['type'];
+if (isset($_GET['source']) && isset($_GET['file'])) {
+    $source = $_GET['source'];
+    $filename = basename($_GET['file']); // 'basename' mencegah hacker akses folder lain (../)
     
-    // Mapping file template
-    $templates = [
-        'dana' => [
-            'file' => 'templates/Template_Pengajuan_Dana.docx',
-            'name' => 'Template_Pengajuan_Dana.docx'
-        ],
-        'tugas' => [
-            'file' => 'templates/Template_Surat_Tugas.docx',
-            'name' => 'Template_Surat_Tugas.docx'
-        ],
-        'bast' => [
-            'file' => 'templates/Template_BAST.docx',
-            'name' => 'Template_Berita_Acara.docx'
-        ]
+    // 2. DAFTAR FOLDER YANG DIIZINKAN (Whitelist)
+    $allowed_paths = [
+        'uploads'   => 'uploads/',
+        'signed'    => 'signed_docs/',
+        'template'  => 'templates/'
     ];
 
-    if (isset($templates[$type])) {
-        $fileConfig = $templates[$type];
-        $targetFile = $fileConfig['file'];
+    if (array_key_exists($source, $allowed_paths)) {
+        $filepath = $allowed_paths[$source] . $filename;
         
-        if (file_exists($targetFile)) {
-            // Force download header
+        if (file_exists($filepath)) {
+            // Deteksi tipe file otomatis (PDF/Docx/dll)
+            $mime = mime_content_type($filepath);
+            
+            // Kirim Header agar browser mengerti ini file download/preview
             header('Content-Description: File Transfer');
-            header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-            header('Content-Disposition: attachment; filename="' . $fileConfig['name'] . '"');
+            header('Content-Type: ' . $mime);
+            header('Content-Disposition: inline; filename="' . $filename . '"');
             header('Expires: 0');
             header('Cache-Control: must-revalidate');
             header('Pragma: public');
-            header('Content-Length: ' . filesize($targetFile));
+            header('Content-Length: ' . filesize($filepath));
             
-            readfile($targetFile);
+            // Baca file yang dikunci tadi dan kirim ke user
+            readfile($filepath);
             exit;
         } else {
-            die("Error: File template tidak ditemukan di server.");
+            die("Error: File tidak ditemukan di server.");
         }
     } else {
-        die("Error: Jenis template tidak valid.");
+        die("Error: Sumber file tidak valid.");
     }
+} else {
+    die("Error: Parameter tidak lengkap.");
 }
 ?>

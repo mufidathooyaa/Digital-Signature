@@ -102,7 +102,7 @@ if ($role === 'karyawan') {
                                         // 2. File di folder signed_docs BENAR-BENAR ADA
                                         if ($row['doc_status'] === 'approved' && file_exists($signedPath)): 
                                     ?>
-                                        <a href="<?php echo $signedPath; ?>" target="_blank" class="btn btn-success btn-sm" style="text-decoration: none;">
+                                        <a href="download.php?source=signed&file=<?php echo basename($signedPath); ?>" target="_blank" class="btn btn-success btn-sm" style="text-decoration: none;">
                                             📥 Download PDF Sah
                                         </a>
                                     <?php endif; ?>
