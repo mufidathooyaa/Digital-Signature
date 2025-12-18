@@ -44,23 +44,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
             if ($document['signed_at']) {
                 
                 // =======================================================
-                // VERIFIKASI DIGITAL SIGNATURE YANG BENAR:
+                // VERIFIKASI DIGITAL SIGNATURE (SECURE MODE):
                 // 1. Hash file upload
-                // 2. Ambil signature dari DB
-                // 3. Ambil PUBLIC KEY penanda tangan
-                // 4. Verifikasi: apakah signature valid untuk hash tersebut?
+                // 2. Rekonstruksi string data ($nomor_surat | $fileHash)
+                // 3. Verifikasi signature terhadap string rekonstruksi
                 // =======================================================
                 
                 if ($verification_mode === 'accurate') {
-                    // MODE AKURAT: Upload File + Verifikasi
-                    
                     if (isset($_FILES['dokumen_upload']) && $_FILES['dokumen_upload']['error'] === 0) {
                         
-                        // 1. Hash File yang Diupload User
+                        // 1. Hitung Hash File yang Diupload User
                         $uploadedFileHash = hash_file('sha256', $_FILES['dokumen_upload']['tmp_name']);
                         
-                        // 2. Ambil Data Signature dari Database
-                        $stmt2 = $conn->prepare("SELECT digital_signature, document_hash FROM signatures WHERE document_id = ?");
+                        // 2. Ambil Signature dari Database
+                        $stmt2 = $conn->prepare("SELECT digital_signature FROM signatures WHERE document_id = ?");
                         $stmt2->bind_param("i", $document['id']);
                         $stmt2->execute();
                         $signature_data = $stmt2->get_result()->fetch_assoc();
@@ -73,45 +70,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                             $key_result = $stmt3->get_result()->fetch_assoc();
                             
                             if ($key_result) {
-                                // 4. Verifikasi Signature dengan Public Key
-                                // Fungsi verifySignature() hanya butuh: hash, signature, public_key
-                                // TIDAK PERLU PASSPHRASE karena public key tidak terenkripsi
+                                // 4. REKONSTRUKSI DATA (PENTING!)
+                                // Kita harus menyusun ulang data persis seperti saat ditandatangani di tanda_tangan.php
+                                // Format: [Nomor Surat] + "|" + [Hash File]
+                                $dataToVerify = $document['nomor_surat'] . '|' . $uploadedFileHash;
+                                $reconstructedHash = hash('sha256', $dataToVerify);
                                 
+                                // 5. VERIFIKASI SIGNATURE
+                                // Cek apakah signature valid untuk hash yang KITA HITUNG SENDIRI (bukan dari DB)
                                 $isSignatureValid = verifySignature(
-                                    $signature_data['document_hash'], 
+                                    $reconstructedHash, 
                                     $signature_data['digital_signature'], 
                                     $key_result['public_key']
                                 );
                                 
-                                // 5. Bandingkan Hash File Upload dengan Hash Tersimpan
-                                $hashMatches = ($uploadedFileHash === $signature_data['document_hash']);
-                                
-                                // 6. Hasil Verifikasi
-                                if ($isSignatureValid && $hashMatches) {
+                                // 6. HASIL VERIFIKASI
+                                if ($isSignatureValid) {
                                     $result['verification'] = array(
                                         'status' => 'valid',
-                                        'message' => 'DOKUMEN VALID! Signature terverifikasi dengan public key & hash cocok.'
-                                    );
-                                } elseif ($isSignatureValid && !$hashMatches) {
-                                    $result['verification'] = array(
-                                        'status' => 'warning',
-                                        'message' => 'Signature VALID, tetapi file berbeda dengan yang ditandatangani (file dimodifikasi).'
+                                        'message' => 'DOKUMEN OTENTIK! Signature valid & isi dokumen tidak berubah.'
                                     );
                                 } else {
+                                    // Jika signature tidak valid, ada 2 kemungkinan:
+                                    // a. File telah dimodifikasi (Hash file berubah -> Reconstructed Hash berubah)
+                                    // b. Signature memang palsu
                                     $result['verification'] = array(
                                         'status' => 'invalid',
-                                        'message' => 'SIGNATURE TIDAK VALID! Dokumen palsu atau rusak.'
+                                        'message' => 'DOKUMEN TIDAK VALID! File telah dimodifikasi atau tanda tangan palsu.'
                                     );
                                 }
                                 
-                                // Tambahan Info untuk Debugging
+                                // Debugging info (Optional)
                                 $result['debug'] = array(
                                     'uploaded_hash' => $uploadedFileHash,
-                                    'stored_hash' => $signature_data['document_hash'],
-                                    'signature_valid' => $isSignatureValid,
-                                    'hash_match' => $hashMatches
+                                    'reconstructed_data_hash' => $reconstructedHash,
+                                    'signature_valid' => $isSignatureValid
                                 );
-                                
+
                             } else {
                                 $result['verification'] = array(
                                     'status' => 'error',
@@ -127,9 +122,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                     } else {
                         $error = "Gagal mengupload file.";
                     }
-                    
-                } else {
-                    // MODE CEPAT: Cek Nomor Surat + Verifikasi Signature di DB
+                }
+                
+                else {
+                    // MODE CEPAT: Cek Nomor Surat Saja (Administratif)
+                    // Mode ini TIDAK menjamin isi file asli, hanya menjamin nomor surat pernah ditandatangani.
                     
                     $stmt2 = $conn->prepare("SELECT digital_signature, document_hash FROM signatures WHERE document_id = ?");
                     $stmt2->bind_param("i", $document['id']);
@@ -143,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                         $key_result = $stmt3->get_result()->fetch_assoc();
                         
                         if ($key_result) {
-                            // Verifikasi Signature dengan Public Key
+                            // Verifikasi Signature terhadap Hash yang tersimpan di DB
                             $isSignatureValid = verifySignature(
                                 $signature_data['document_hash'], 
                                 $signature_data['digital_signature'], 
@@ -153,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                             if ($isSignatureValid) {
                                 $result['verification'] = array(
                                     'status' => 'valid_db', 
-                                    'message' => 'Nomor Surat Resmi & Signature Terverifikasi dengan Public Key.'
+                                    'message' => 'Nomor Surat Terdaftar & Tanda Tangan Administratif Valid.'
                                 );
                             } else {
                                 $result['verification'] = array(
@@ -270,28 +267,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                     <div class="alert alert-success" style="font-size: 18px; padding: 25px; text-align: center;">
                         <div style="font-size: 40px; margin-bottom: 10px;">✅</div>
                         <strong>DOKUMEN OTENTIK</strong><br>
-                        <span style="font-size: 14px; font-weight: normal;">Digital signature valid & hash file cocok</span>
+                        <span style="font-size: 14px; font-weight: normal;">Digital signature valid & hash file cocok.</span>
                     </div>
 
                 <?php elseif ($result['verification']['status'] === 'valid_db'): ?>
                     <div class="alert alert-success" style="font-size: 18px; padding: 25px; text-align: center;">
                         <div style="font-size: 40px; margin-bottom: 10px;">✅</div>
-                        <strong>SIGNATURE TERVERIFIKASI</strong><br>
-                        <span style="font-size: 14px; font-weight: normal;">Nomor surat resmi & signature valid dengan public key</span>
-                    </div>
-
-                <?php elseif ($result['verification']['status'] === 'warning'): ?>
-                    <div class="alert-warning-sig">
-                        <div style="font-size: 30px; margin-bottom: 10px;">⚠️</div>
-                        <strong>PERHATIAN: FILE DIMODIFIKASI</strong><br>
-                        <span style="font-size: 14px;">Signature VALID, tetapi file berbeda dengan yang ditandatangani.</span>
+                        <strong>SIGNATURE TERVERIFIKASI (DB)</strong><br>
+                        <span style="font-size: 14px; font-weight: normal;">Nomor surat resmi & signature valid dengan public key.</span>
                     </div>
 
                 <?php elseif ($result['verification']['status'] === 'invalid'): ?>
                     <div class="alert alert-danger" style="font-size: 18px; padding: 25px; text-align: center;">
                         <div style="font-size: 40px; margin-bottom: 10px;">❌</div>
-                        <strong>SIGNATURE TIDAK VALID</strong><br>
-                        <span style="font-size: 14px;">Verifikasi dengan public key GAGAL. Dokumen palsu atau rusak.</span>
+                        <strong>DOKUMEN TIDAK VALID / DIMODIFIKASI</strong><br>
+                        <span style="font-size: 14px;">Isi file berbeda dengan yang ditandatangani atau signature palsu.</span>
                     </div>
                 
                 <?php else: ?>
@@ -302,11 +292,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
 
                 <?php if (isset($result['debug']) && isset($_SESSION['user'])): ?>
                 <div class="debug-box">
-                    <strong>Debug Info (Only for logged-in users):</strong><br>
+                    <strong>Debug Info (For logged-in users):</strong><br>
                     Uploaded Hash: <?php echo substr($result['debug']['uploaded_hash'], 0, 32); ?>...<br>
-                    Stored Hash: <?php echo substr($result['debug']['stored_hash'], 0, 32); ?>...<br>
-                    Signature Valid: <?php echo $result['debug']['signature_valid'] ? 'YES' : 'NO'; ?><br>
-                    Hash Match: <?php echo $result['debug']['hash_match'] ? 'YES' : 'NO'; ?>
+                    Reconstructed Hash: <?php echo substr($result['debug']['reconstructed_data_hash'], 0, 32); ?>...<br>
+                    Signature Valid: <?php echo $result['debug']['signature_valid'] ? 'YES' : 'NO'; ?>
                 </div>
                 <?php endif; ?>
 

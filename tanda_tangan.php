@@ -31,12 +31,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sign']) && $keypair) 
         
         if ($document) {
             // =====================================================
-            // ALUR KEAMANAN TINGGI (ENKRIPSI + METADATA SIGNING)
+            // ALUR KEAMANAN TINGGI (ENKRIPSI + FILE INTEGRITY)
             // 1. Dekripsi file asli ke folder temp
             // 2. Stempel QR ke file temp
             // 3. Enkripsi file hasil stempel ke folder signed_docs/
-            // 4. Sign Hash Metadata
-            // 5. Hapus file temp
+            // 4. Hitung Hash File PDF Final (Integrity Check)
+            // 5. Sign (Nomor Surat + Hash File)
+            // 6. Hapus file temp
             // =====================================================
             
             $targetDir = 'signed_docs/';
@@ -91,19 +92,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sign']) && $keypair) 
                     try {
                         encryptFileStorage($tempOutputFile, $encryptedDestPath);
                         
-                        // B. BUAT DIGEST DARI METADATA (Sesuai kode Anda)
-                        $metadataString = $document['nomor_surat'] . '|' . 
-                                        $document['nama_pengaju'] . '|' . 
-                                        $document['jenis_dokumen'] . '|' . 
-                                        $document['tanggal_mulai'];
+                        // =========================================================
+                        // B. PERBAIKAN: BUAT DIGEST YANG MENGIKAT ISI FILE
+                        // =========================================================
                         
-                        $digestToSign = hash('sha256', $metadataString); 
+                        // 1. Hitung Hash dari FILE PDF FINAL (yang sudah ada QR)
+                        // Ini memastikan integritas file. Jika isi PDF diubah 1 byte pun, hash ini berubah.
+                        $fileHash = hash_file('sha256', $tempOutputFile);
+                        
+                        // 2. Gabungkan Metadata Kunci + Hash File
+                        // Kita ikat Nomor Surat dengan Isi File-nya.
+                        $dataToSign = $document['nomor_surat'] . '|' . $fileHash;
+                        
+                        // 3. Buat Digest Akhir (SHA-256)
+                        // Inilah yang akan dienkripsi oleh Private Key Direksi
+                        $digestToSign = hash('sha256', $dataToSign); 
+                        
+                        // =========================================================
                         
                         // C. SIGN DIGEST DENGAN PRIVATE KEY
                         $signature = signDocument($digestToSign, $keypair['private_key'], $passphrase);
                         
                         if ($signature) {
                             // Simpan Signature ke Database
+                            // Note: Kolom document_hash di DB sekarang menyimpan Hash dari ($nomor_surat . '|' . $fileHash)
                             $stmt = $conn->prepare("INSERT INTO signatures (document_id, signer_id, document_hash, digital_signature) VALUES (?, ?, ?, ?)");
                             $stmt->bind_param("iiss", $doc_id, $_SESSION['user']['id'], $digestToSign, $signature);
                             
@@ -206,8 +218,8 @@ $result = $conn->query($query);
             <strong>ℹ️ Cara Kerja Sistem Terenkripsi:</strong><br>
             1. Sistem mendekripsi file sementara & menempelkan QR Code<br>
             2. File final dienkripsi ulang (AES-256) agar aman di server<br>
-            3. Metadata dokumen di-hash (SHA-256)<br>
-            4. Hash Metadata di-sign dengan Private Key Anda
+            3. Sistem menghitung Hash dari File PDF Final<br>
+            4. Hash File + Nomor Surat di-sign dengan Private Key Anda
         </div>
         
         <?php if ($success): ?>
