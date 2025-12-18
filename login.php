@@ -13,12 +13,21 @@ $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = sanitizeInput($_POST['username']);
     $password = $_POST['password'];
+    $captcha_input = $_POST['captcha']; // Ambil input captcha user
     
-    if (login($username, $password, $conn)) {
-        header("Location: dashboard.php");
-        exit;
+    // VALIDASI CAPTCHA
+    if (!isset($_SESSION['captcha_code']) || $captcha_input !== $_SESSION['captcha_code']) {
+        $error = 'Kode CAPTCHA salah! Silakan coba lagi.';
     } else {
-        $error = 'Username atau password salah!';
+        // Jika Captcha benar, lanjut cek login
+        if (login($username, $password, $conn)) {
+            // Hapus session captcha setelah berhasil login agar bersih
+            unset($_SESSION['captcha_code']); 
+            header("Location: dashboard.php");
+            exit;
+        } else {
+            $error = 'Username atau password salah!';
+        }
     }
 }
 
@@ -64,6 +73,13 @@ function sanitizeInput($data) {
                     <input type="password" name="password" placeholder="Password" required>
                 </div>
 
+                <div class="captcha-wrapper" style="margin-bottom: 15px; text-align: center;">
+                    <img src="includes/captcha.php" alt="CAPTCHA" style="border-radius: 8px; border: 1px solid #ddd; margin-bottom: 10px;">
+                    <div class="input-group">
+                        <span class="icon">🛡️</span>
+                        <input type="text" name="captcha" placeholder="Ketik kode di atas" required autocomplete="off">
+                    </div>
+                </div>
                 <button type="submit" class="btn-login">Login</button>
             </form>
         </div>

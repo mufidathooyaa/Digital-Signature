@@ -97,3 +97,14 @@ body {
     border-radius: 8px;
     margin-bottom: 15px;
 }
+
+.captcha-wrapper img {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    height: 40px; /* Sesuaikan tinggi */
+}
+
+.captcha-wrapper .input-group {
+    margin-bottom: 0; /* Override margin default jika perlu */
+}
