@@ -20,29 +20,46 @@ if (isset($_GET['source']) && isset($_GET['file'])) {
     if (array_key_exists($source, $allowed_paths)) {
         $filepath = $allowed_paths[$source] . $filename;
         
+        // ... Kode validasi path sebelumnya (whitelist folder dsb) ...
+
         if (file_exists($filepath)) {
-            // Deteksi tipe file otomatis (PDF/Docx/dll)
-            $mime = mime_content_type($filepath);
+            // Deteksi tipe file
+            $mime = mime_content_type($filepath); // Ini mungkin mendeteksi 'application/octet-stream' karena terenkripsi
             
-            // Kirim Header agar browser mengerti ini file download/preview
+            // Override mime jika PDF (karena file terenkripsi tidak dikenali sebagai PDF oleh server)
+            if (strpos($filename, '.pdf') !== false) {
+                $mime = 'application/pdf';
+            } elseif (strpos($filename, '.docx') !== false) {
+                $mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            }
+
+            // Header Download
             header('Content-Description: File Transfer');
             header('Content-Type: ' . $mime);
             header('Content-Disposition: inline; filename="' . $filename . '"');
             header('Expires: 0');
             header('Cache-Control: must-revalidate');
             header('Pragma: public');
-            header('Content-Length: ' . filesize($filepath));
             
-            // Baca file yang dikunci tadi dan kirim ke user
-            readfile($filepath);
+            // --- PROSES DEKRIPSI ---
+            // Jangan pakai readfile(), tapi dekripsi dulu
+            require_once 'includes/functions.php'; // Pastikan functions diload
+            
+            $decryptedContent = getDecryptedFileContent($filepath);
+            
+            header('Content-Length: ' . strlen($decryptedContent));
+            echo $decryptedContent;
             exit;
-        } else {
+        } 
+        else {
             die("Error: File tidak ditemukan di server.");
         }
-    } else {
+    } 
+    else {
         die("Error: Sumber file tidak valid.");
     }
-} else {
+} 
+else {
     die("Error: Parameter tidak lengkap.");
 }
 ?>

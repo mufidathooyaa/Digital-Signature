@@ -17,6 +17,8 @@ function getConnection() {
     return $conn;
 }
 
+define('FILE_ENCRYPTION_KEY', 'X9#mP2$vL5n@Q8!zR3wB7*Y6fD4gH1kJ');
+
 // Test koneksi
 $conn = getConnection();
 ?>

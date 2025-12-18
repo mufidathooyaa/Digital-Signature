@@ -31,66 +31,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sign']) && $keypair) 
         
         if ($document) {
             // =====================================================
-            // ALUR BENAR: 
-            // 1. Stempel QR ke PDF → File Final
-            // 2. Hash File Final
-            // 3. Passphrase = Unlock Private Key (yang terenkripsi)
-            // 4. Sign Hash dengan Private Key (yang sudah di-unlock)
+            // ALUR KEAMANAN TINGGI (ENKRIPSI + METADATA SIGNING)
+            // 1. Dekripsi file asli ke folder temp
+            // 2. Stempel QR ke file temp
+            // 3. Enkripsi file hasil stempel ke folder signed_docs/
+            // 4. Sign Hash Metadata
+            // 5. Hapus file temp
             // =====================================================
             
             $targetDir = 'signed_docs/';
             if (!file_exists($targetDir)) {
                 mkdir($targetDir, 0777, true);
             }
+
+            // --- PERSIAPAN FILE SEMENTARA ---
+            $tempDir = sys_get_temp_dir();
+            $encryptedSourcePath = $document['file_path']; // File di uploads/ (Terenkripsi)
             
-            // STEP 1: Generate QR & Stempel ke PDF
-            $host = $_SERVER['HTTP_HOST']; 
-            $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
-            $base_path = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
-            $qrContent = "$protocol://$host$base_path/verifikasi.php?code=" . urlencode($document['nomor_surat']);
+            // 1. DEKRIPSI FILE ASLI
+            $sourceContent = getDecryptedFileContent($encryptedSourcePath);
             
-            require_once 'includes/pdf_stamper.php';
-            
-            $sourcePdf = $document['file_path'];
-            $outputPdf = $targetDir . basename($sourcePdf);
-            
-            $stampSuccess = false;
-            try {
-                if (stampQrToPdf($sourcePdf, $outputPdf, $qrContent, $document['nomor_surat'])) {
-                    $stampSuccess = true;
-                } else {
-                    $error = "Gagal menempelkan QR Code pada PDF.";
-                }
-            } catch (Exception $e) {
-                $error = "Error PDF Library: " . $e->getMessage();
-            }
-            
-            // STEP 2: Jika Stempel Berhasil, HASH FILE FINAL (yang sudah ada QR)
-            if ($stampSuccess && file_exists($outputPdf)) {
+            if ($sourceContent === false) {
+                $error = "Gagal mendekripsi file asli. Pastikan Key Enkripsi benar.";
+            } else {
+                // Simpan versi terdekripsi ke file sementara agar bisa dibaca library PDF
+                $tempSourceFile = $tempDir . '/temp_src_' . uniqid() . '.pdf';
+                file_put_contents($tempSourceFile, $sourceContent);
                 
-                $finalFileHash = hash_file('sha256', $outputPdf);
+                // Siapkan path untuk output sementara (belum terenkripsi)
+                $tempOutputFile = $tempDir . '/temp_out_' . uniqid() . '.pdf';
                 
-                // STEP 3 & 4: 
-                // - Passphrase digunakan untuk UNLOCK private key yang terenkripsi
-                // - Private key yang di-unlock kemudian dipakai untuk SIGN hash
-                // Fungsi signDocument() sudah menangani ini di crypto.php
+                // STEP 1: Generate QR & Stempel ke PDF (Gunakan file temp)
+                $host = $_SERVER['HTTP_HOST']; 
+                $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
+                $base_path = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
+                $qrContent = "$protocol://$host$base_path/verifikasi.php?code=" . urlencode($document['nomor_surat']);
                 
-                $signature = signDocument($finalFileHash, $keypair['private_key'], $passphrase);
+                require_once 'includes/pdf_stamper.php';
                 
-                if ($signature) {
-                    // Simpan Signature ke Database
-                    $stmt = $conn->prepare("INSERT INTO signatures (document_id, signer_id, document_hash, digital_signature) VALUES (?, ?, ?, ?)");
-                    $stmt->bind_param("iiss", $doc_id, $_SESSION['user']['id'], $finalFileHash, $signature);
-                    
-                    if ($stmt->execute()) {
-                        logActivity($conn, $_SESSION['user']['id'], 'sign_document', "Menandatangani dokumen: " . $document['nomor_surat']);
-                        $success = "✅ Dokumen berhasil ditandatangani! Hash file final telah di-sign dengan private key Anda.";
+                $stampSuccess = false;
+                try {
+                    // Gunakan tempSourceFile dan tempOutputFile
+                    if (stampQrToPdf($tempSourceFile, $tempOutputFile, $qrContent, $document['nomor_surat'])) {
+                        $stampSuccess = true;
                     } else {
-                        $error = "Gagal menyimpan signature ke database.";
+                        $error = "Gagal menempelkan QR Code pada PDF.";
                     }
-                } else {
-                    $error = "⛔ Gagal membuat tanda tangan! Passphrase SALAH atau private key rusak.";
+                } catch (Exception $e) {
+                    $error = "Error PDF Library: " . $e->getMessage();
                 }
+                
+                // STEP 2: Jika Stempel Berhasil, LANJUT PROSES
+                if ($stampSuccess && file_exists($tempOutputFile)) {
+                    
+                    // A. ENKRIPSI HASIL AKHIR KE FOLDER TUJUAN
+                    $finalFilename = basename($document['file_path']);
+                    $encryptedDestPath = $targetDir . $finalFilename;
+                    
+                    try {
+                        encryptFileStorage($tempOutputFile, $encryptedDestPath);
+                        
+                        // B. BUAT DIGEST DARI METADATA (Sesuai kode Anda)
+                        $metadataString = $document['nomor_surat'] . '|' . 
+                                        $document['nama_pengaju'] . '|' . 
+                                        $document['jenis_dokumen'] . '|' . 
+                                        $document['tanggal_mulai'];
+                        
+                        $digestToSign = hash('sha256', $metadataString); 
+                        
+                        // C. SIGN DIGEST DENGAN PRIVATE KEY
+                        $signature = signDocument($digestToSign, $keypair['private_key'], $passphrase);
+                        
+                        if ($signature) {
+                            // Simpan Signature ke Database
+                            $stmt = $conn->prepare("INSERT INTO signatures (document_id, signer_id, document_hash, digital_signature) VALUES (?, ?, ?, ?)");
+                            $stmt->bind_param("iiss", $doc_id, $_SESSION['user']['id'], $digestToSign, $signature);
+                            
+                            if ($stmt->execute()) {
+                                logActivity($conn, $_SESSION['user']['id'], 'sign_document', "Menandatangani dokumen: " . $document['nomor_surat']);
+                                $success = "✅ Dokumen berhasil ditandatangani dan dienkripsi aman!";
+                            } else {
+                                $error = "Gagal menyimpan signature ke database.";
+                            }
+                        } else {
+                            $error = "⛔ Gagal membuat tanda tangan! Passphrase SALAH atau private key rusak.";
+                        }
+
+                    } catch (Exception $e) {
+                        $error = "Gagal mengenkripsi file hasil: " . $e->getMessage();
+                    }
+                }
+                
+                // CLEANUP: Hapus file sementara (PENTING untuk keamanan)
+                if (file_exists($tempSourceFile)) unlink($tempSourceFile);
+                if (file_exists($tempOutputFile)) unlink($tempOutputFile);
             }
         } else {
             $error = "Dokumen tidak ditemukan atau belum disetujui.";
@@ -169,11 +203,11 @@ $result = $conn->query($query);
         </div>
 
         <div class="info-box">
-            <strong>ℹ️ Cara Kerja:</strong><br>
-            1. Sistem menempelkan QR Code ke PDF<br>
-            2. File final di-hash dengan SHA-256<br>
-            3. Passphrase membuka private key terenkripsi<br>
-            4. Hash di-sign dengan private key menggunakan RSA
+            <strong>ℹ️ Cara Kerja Sistem Terenkripsi:</strong><br>
+            1. Sistem mendekripsi file sementara & menempelkan QR Code<br>
+            2. File final dienkripsi ulang (AES-256) agar aman di server<br>
+            3. Metadata dokumen di-hash (SHA-256)<br>
+            4. Hash Metadata di-sign dengan Private Key Anda
         </div>
         
         <?php if ($success): ?>
@@ -248,11 +282,14 @@ $result = $conn->query($query);
                                     <td><?php echo date('d/m/Y H:i', strtotime($row['signed_at'])); ?></td>
                                     <td>
                                         <?php 
+                                            // Ambil nama file saja
                                             $filename = basename($row['file_path']);
+                                            
+                                            // Cek keberadaan file (meski terenkripsi, file fisik harus ada)
                                             $signedPath = "signed_docs/" . $filename;
                                         ?>
                                         <?php if (file_exists($signedPath)): ?>
-                                            <a href="<?php echo $signedPath; ?>" target="_blank" class="btn btn-success btn-sm">📥 Download</a>
+                                            <a href="download.php?source=signed&file=<?php echo $filename; ?>" target="_blank" class="btn btn-success btn-sm">📥 Download</a>
                                         <?php else: ?>
                                             <span class="badge badge-warning">File hilang</span>
                                         <?php endif; ?>

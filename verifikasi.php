@@ -66,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['code'])) {
                         $signature_data = $stmt2->get_result()->fetch_assoc();
                         
                         if ($signature_data) {
-                            // 3. Ambil PUBLIC KEY Penanda Tangan (TIDAK PERLU PASSPHRASE!)
+                            // 3. Ambil PUBLIC KEY Penanda Tangan
                             $stmt3 = $conn->prepare("SELECT public_key FROM keypairs WHERE user_id = ? AND status = 'active' ORDER BY generated_at DESC LIMIT 1");
                             $stmt3->bind_param("i", $document['signer_id']);
                             $stmt3->execute();

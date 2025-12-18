@@ -56,43 +56,41 @@ function generateNomorSurat($conn, $kode) {
 }
 
 // Fungsi untuk upload file
+// UPDATE FUNGSI: uploadFile
 function uploadFile($file, $targetDir = 'uploads/') {
     if (!file_exists($targetDir)) {
         mkdir($targetDir, 0777, true);
     }
     
-    $fileName = time() . '_' . basename($file['name']);
-    $targetFile = $targetDir . $fileName;
+    // Nama file asli untuk ekstensi
+    $originalName = basename($file['name']);
+    $fileType = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
     
-    // --- PERBAIKAN DI SINI ---
-    // Definisikan $fileType dengan mengambil ekstensi file
-    $fileType = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
-    
-    // Opsi Tambahan: Validasi MIME Type agar lebih aman (menggantikan logika finfo yang belum selesai)
+    // Validasi Ekstensi & MIME (Sama seperti kode lama Anda)
+    if ($fileType != "pdf") {
+        return array('success' => false, 'message' => 'Hanya file PDF yang diperbolehkan');
+    }
     $finfo = finfo_open(FILEINFO_MIME_TYPE);
     $mime = finfo_file($finfo, $file['tmp_name']);
     finfo_close($finfo);
-
-    // Cek apakah file adalah PDF (berdasarkan ekstensi)
-    if ($fileType != "pdf") {
-        return array('success' => false, 'message' => 'Hanya file PDF yang diperbolehkan (Ekstensi salah)');
-    }
-
-    // Cek apakah file adalah PDF (berdasarkan MIME type - lebih aman)
     if ($mime != 'application/pdf') {
-        return array('success' => false, 'message' => 'File bukan PDF yang valid');
+        return array('success' => false, 'message' => 'File bukan PDF valid');
     }
-    
-    // Cek ukuran file (max 5MB)
     if ($file['size'] > 5000000) {
-        return array('success' => false, 'message' => 'Ukuran file terlalu besar (max 5MB)');
+        return array('success' => false, 'message' => 'Ukuran file max 5MB');
     }
-    
-    if (move_uploaded_file($file['tmp_name'], $targetFile)) {
+
+    // --- PERUBAHAN ENKRIPSI ---
+    $fileName = time() . '_' . $originalName; // Nama file di database
+    $targetFile = $targetDir . $fileName;     // Lokasi simpan
+
+    // Alih-alih move_uploaded_file langsung, kita ENKRIPSI dulu
+    try {
+        encryptFileStorage($file['tmp_name'], $targetFile);
         return array('success' => true, 'file_path' => $targetFile);
+    } catch (Exception $e) {
+        return array('success' => false, 'message' => 'Gagal mengenkripsi file');
     }
-    
-    return array('success' => false, 'message' => 'Upload file gagal');
 }
 
 // Fungsi untuk mendapatkan status badge
@@ -252,4 +250,31 @@ function extractSpecificData($filePath, $jenis_dokumen) {
     
     return $extractedData;
 }
+
+// FUNGSI BARU: Enkripsi File saat disimpan
+function encryptFileStorage($sourceFile, $destFile) {
+    $key = FILE_ENCRYPTION_KEY;
+    $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length('aes-256-cbc'));
+    
+    $content = file_get_contents($sourceFile);
+    $encrypted = openssl_encrypt($content, 'aes-256-cbc', $key, 0, $iv);
+    
+    // Simpan IV di 16 byte pertama, lalu konten terenkripsi
+    file_put_contents($destFile, $iv . $encrypted);
+}
+
+// FUNGSI BARU: Dekripsi File saat mau dibaca/download
+function getDecryptedFileContent($filePath) {
+    if (!file_exists($filePath)) return false;
+
+    $key = FILE_ENCRYPTION_KEY;
+    $content = file_get_contents($filePath);
+    
+    $ivLength = openssl_cipher_iv_length('aes-256-cbc');
+    $iv = substr($content, 0, $ivLength);
+    $encryptedData = substr($content, $ivLength);
+    
+    return openssl_decrypt($encryptedData, 'aes-256-cbc', $key, 0, $iv);
+}
+
 ?>
