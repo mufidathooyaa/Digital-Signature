@@ -158,10 +158,9 @@ function verifyCsrfToken($token) {
     return isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token);
 }
 
-/**
+/*
  * Fungsi Cerdas: Membaca PDF dan mengambil data spesifik (Targeted Extraction)
  * Digunakan untuk mengambil "Isi Vital" dokumen agar ikut di-hash.
- */
 function extractSpecificData($filePath, $jenis_dokumen) {
     // 1. Load Library
     $autoloadPath = __DIR__ . '/../libs/fpdi/autoload.php';
@@ -250,6 +249,7 @@ function extractSpecificData($filePath, $jenis_dokumen) {
     
     return $extractedData;
 }
+*/
 
 // FUNGSI BARU: Enkripsi File saat disimpan
 function encryptFileStorage($sourceFile, $destFile) {

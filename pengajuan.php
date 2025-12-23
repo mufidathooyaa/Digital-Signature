@@ -19,42 +19,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Generate Nomor Surat Baru oleh Sistem
     $nomor_surat = generateNomorSurat($conn, $jenis_dokumen);
     
-    // Set tanggal hari ini
-    $tanggal_mulai = date('Y-m-d');
-    $tanggal_selesai = date('Y-m-d');
+    // --- LOGIKA TANGGAL (MODIFIKASI) ---
+    // Jika Surat Tugas, ambil dari input user. Selain itu, set otomatis hari ini.
+    if ($jenis_dokumen === 'tugas') {
+        // Validasi input tanggal
+        if (empty($_POST['tgl_mulai']) || empty($_POST['tgl_selesai'])) {
+            $error = "Untuk Surat Tugas, tanggal mulai dan selesai wajib diisi!";
+        } else {
+            $tanggal_mulai = sanitizeInput($_POST['tgl_mulai']);
+            $tanggal_selesai = sanitizeInput($_POST['tgl_selesai']);
+            
+            // Validasi logika tanggal
+            if ($tanggal_selesai < $tanggal_mulai) {
+                $error = "Tanggal selesai tidak boleh lebih awal dari tanggal mulai!";
+            }
+        }
+    } else {
+        // Untuk Pengajuan Dana & BAST, set otomatis hari ini
+        $tanggal_mulai = date('Y-m-d');
+        $tanggal_selesai = date('Y-m-d');
+    }
+    // -----------------------------------
     
     // Buat keterangan standar
     $keterangan = "Pengajuan dokumen " . strtoupper(str_replace('_', ' ', $jenis_dokumen)) . " oleh " . $nama_pengaju;
 
     // 2. VALIDASI & UPLOAD
-    if (!isset($_FILES['file_pendukung']) || $_FILES['file_pendukung']['error'] === UPLOAD_ERR_NO_FILE) {
-        $error = "Anda wajib mengupload file dokumen yang sudah diisi!";
-    } else {
-        // Proses Upload File
-        $file_path = null;
-        if ($_FILES['file_pendukung']['error'] === UPLOAD_ERR_OK) {
-            $upload_result = uploadFile($_FILES['file_pendukung']);
-            if ($upload_result['success']) {
-                $file_path = $upload_result['file_path'];
-            } else {
-                $error = $upload_result['message'];
+    if (empty($error)) { // Cek error tanggal dulu sebelum upload
+        if (!isset($_FILES['file_pendukung']) || $_FILES['file_pendukung']['error'] === UPLOAD_ERR_NO_FILE) {
+            $error = "Anda wajib mengupload file dokumen yang sudah diisi!";
+        } else {
+            // Proses Upload File
+            $file_path = null;
+            if ($_FILES['file_pendukung']['error'] === UPLOAD_ERR_OK) {
+                $upload_result = uploadFile($_FILES['file_pendukung']);
+                if ($upload_result['success']) {
+                    $file_path = $upload_result['file_path'];
+                } else {
+                    $error = $upload_result['message'];
+                }
             }
-        }
-        
-        // 3. SIMPAN KE DATABASE
-        if (empty($error)) {
-            $stmt = $conn->prepare("INSERT INTO documents (user_id, nomor_surat, jenis_dokumen, nama_pengaju, jabatan_pengaju, tanggal_mulai, tanggal_selesai, keterangan, file_path, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')");
             
-            $jabatan = 'Karyawan'; 
-            $stmt->bind_param("issssssss", $user_id, $nomor_surat, $jenis_dokumen, $nama_pengaju, $jabatan, $tanggal_mulai, $tanggal_selesai, $keterangan, $file_path);
-            
-            if ($stmt->execute()) {
-                logActivity($conn, $_SESSION['user']['id'], 'create_document', "Membuat pengajuan $jenis_dokumen ($nomor_surat)");
-                $success = "Pengajuan berhasil! Nomor Surat Sistem: <strong>$nomor_surat</strong>";
-            } else {
-                $error = "Gagal menyimpan data. Silakan coba lagi.";
-                // Hapus file jika database gagal
-                if ($file_path && file_exists($file_path)) unlink($file_path);
+            // 3. SIMPAN KE DATABASE
+            if (empty($error)) {
+                $stmt = $conn->prepare("INSERT INTO documents (user_id, nomor_surat, jenis_dokumen, nama_pengaju, jabatan_pengaju, tanggal_mulai, tanggal_selesai, keterangan, file_path, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')");
+                
+                $jabatan = 'Karyawan'; 
+                $stmt->bind_param("issssssss", $user_id, $nomor_surat, $jenis_dokumen, $nama_pengaju, $jabatan, $tanggal_mulai, $tanggal_selesai, $keterangan, $file_path);
+                
+                if ($stmt->execute()) {
+                    logActivity($conn, $_SESSION['user']['id'], 'create_document', "Membuat pengajuan $jenis_dokumen ($nomor_surat)");
+                    $success = "Pengajuan berhasil! Nomor Surat Sistem: <strong>$nomor_surat</strong>";
+                } else {
+                    $error = "Gagal menyimpan data. Silakan coba lagi.";
+                    // Hapus file jika database gagal
+                    if ($file_path && file_exists($file_path)) unlink($file_path);
+                }
             }
         }
     }
@@ -90,12 +110,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <form method="POST" action="" enctype="multipart/form-data">
                 <div class="form-group">
                     <label for="jenis_dokumen">Jenis Dokumen *</label>
-                    <select name="jenis_dokumen" id="jenis_dokumen" required>
+                    <select name="jenis_dokumen" id="jenis_dokumen" required onchange="toggleDateInputs()">
                         <option value="">-- Pilih Jenis Template --</option>
                         <option value="dana">Formulir Pengajuan Dana</option>
                         <option value="tugas">Surat Tugas</option>
                         <option value="bast">Berita Acara (BAST)</option>
                     </select>
+                </div>
+
+                <div id="area-tanggal" style="display: none; background: #eff6ff; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #bfdbfe;">
+                    <h4 style="margin-top: 0; color: #1e40af; font-size: 14px; margin-bottom: 10px;">📅 Detail Waktu Penugasan</h4>
+                    <div style="display: flex; gap: 15px;">
+                        <div style="flex: 1;">
+                            <label for="tgl_mulai" style="font-size: 13px; display: block; margin-bottom: 5px;">Tanggal Mulai *</label>
+                            <input type="date" name="tgl_mulai" id="tgl_mulai" class="form-control" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                        </div>
+                        <div style="flex: 1;">
+                            <label for="tgl_selesai" style="font-size: 13px; display: block; margin-bottom: 5px;">Tanggal Selesai *</label>
+                            <input type="date" name="tgl_selesai" id="tgl_selesai" class="form-control" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                        </div>
+                    </div>
+                    <small style="color: #666; display: block; margin-top: 8px;">Masukkan durasi sesuai surat tugas.</small>
                 </div>
                 
                 <div class="form-group">
@@ -123,5 +158,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
     
     <script src="assets/js/script.js"></script>
+    
+    <script>
+        function toggleDateInputs() {
+            var jenis = document.getElementById('jenis_dokumen').value;
+            var areaTanggal = document.getElementById('area-tanggal');
+            var inputMulai = document.getElementById('tgl_mulai');
+            var inputSelesai = document.getElementById('tgl_selesai');
+
+            // Cek jika yang dipilih adalah surat tugas
+            if (jenis === 'tugas') {
+                areaTanggal.style.display = 'block';
+                inputMulai.required = true;
+                inputSelesai.required = true;
+            } else {
+                areaTanggal.style.display = 'none';
+                inputMulai.required = false;
+                inputSelesai.required = false;
+                
+                // Reset nilai agar tidak terkirim jika batal memilih tugas
+                inputMulai.value = '';
+                inputSelesai.value = '';
+            }
+        }
+    </script>
 </body>
 </html>

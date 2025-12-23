@@ -107,8 +107,8 @@ $result = $conn->query($query);
                                 <td>
                                     <form method="POST" style="display: inline;">
                                         <input type="hidden" name="document_id" value="<?php echo $row['id']; ?>">
-                                        <button type="submit" name="action" value="approve" class="btn btn-success btn-sm" onclick="return confirm('Setujui dokumen ini?')">✓ Setujui</button>
-                                        <button type="submit" name="action" value="reject" class="btn btn-danger btn-sm" onclick="return confirm('Tolak dokumen ini?')">✗ Tolak</button>
+                                        <button type="submit" name="action" value="approve" class="btn btn-success btn-sm" onclick="return confirm('Setujui dokumen ini?')">Setuju</button>
+                                        <button type="submit" name="action" value="reject" class="btn btn-danger btn-sm" onclick="return confirm('Tolak dokumen ini?')">Tolak</button>
                                     </form>
                                 </td>
                             </tr>
